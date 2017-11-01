@@ -54,6 +54,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <media/hardware/HardwareAPI.h>
 #include <media/msm_media_info.h>
 #include <sys/eventfd.h>
+#include <nativebase/nativebase.h>
 
 #ifndef _ANDROID_
 #include <sys/ioctl.h>
@@ -787,6 +788,7 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
     m_smoothstreaming_mode = false;
     m_smoothstreaming_width = 0;
     m_smoothstreaming_height = 0;
+    m_decode_order_mode = false;
     is_q6_platform = false;
     m_perf_control.send_hint_to_mpctl(true);
     m_input_pass_buffer_fd = false;
@@ -1393,14 +1395,8 @@ void omx_vdec::process_event_cb(void *ctxt, unsigned char id)
                                                     pThis->omx_report_error ();
                                                 } else {
                                                     /*Check if we need generate event for Flush done*/
-                                                    if (BITMASK_PRESENT(&pThis->m_flags,
-                                                                OMX_COMPONENT_INPUT_FLUSH_PENDING)) {
-                                                        BITMASK_CLEAR (&pThis->m_flags,OMX_COMPONENT_INPUT_FLUSH_PENDING);
-                                                        DEBUG_PRINT_LOW("Input Flush completed - Notify Client");
-                                                        pThis->m_cb.EventHandler(&pThis->m_cmp, pThis->m_app_data,
-                                                                OMX_EventCmdComplete,OMX_CommandFlush,
-                                                                OMX_CORE_INPUT_PORT_INDEX,NULL );
-                                                    }
+                                                    pThis->notify_flush_done(ctxt);
+
                                                     if (BITMASK_PRESENT(&pThis->m_flags,
                                                                 OMX_COMPONENT_IDLE_PENDING)) {
                                                         if (pThis->stream_off(OMX_CORE_INPUT_PORT_INDEX)) {
@@ -1434,14 +1430,8 @@ void omx_vdec::process_event_cb(void *ctxt, unsigned char id)
                                                     pThis->omx_report_error ();
                                                 } else {
                                                     /*Check if we need generate event for Flush done*/
-                                                    if (BITMASK_PRESENT(&pThis->m_flags,
-                                                                OMX_COMPONENT_OUTPUT_FLUSH_PENDING)) {
-                                                        DEBUG_PRINT_LOW("Notify Output Flush done");
-                                                        BITMASK_CLEAR (&pThis->m_flags,OMX_COMPONENT_OUTPUT_FLUSH_PENDING);
-                                                        pThis->m_cb.EventHandler(&pThis->m_cmp, pThis->m_app_data,
-                                                                OMX_EventCmdComplete,OMX_CommandFlush,
-                                                                OMX_CORE_OUTPUT_PORT_INDEX,NULL );
-                                                    }
+                                                    pThis->notify_flush_done(ctxt);
+
                                                     if (BITMASK_PRESENT(&pThis->m_flags,
                                                                 OMX_COMPONENT_OUTPUT_FLUSH_IN_DISABLE_PENDING)) {
                                                         DEBUG_PRINT_LOW("Internal flush complete");
@@ -2536,6 +2526,12 @@ OMX_ERRORTYPE omx_vdec::component_init(OMX_STRING role)
         }
     }
 
+    {
+        VendorExtensionStore *extStore = const_cast<VendorExtensionStore *>(&mVendorExtensionStore);
+        init_vendor_extensions(*extStore);
+        mVendorExtensionStore.dumpExtensions((const char *)role);
+    }
+
     if (eRet != OMX_ErrorNone) {
         DEBUG_PRINT_ERROR("Component Init Failed");
     } else {
@@ -3273,6 +3269,37 @@ bool omx_vdec::execute_input_flush()
     return bRet;
 }
 
+/*=========================================================================
+FUNCTION : notify_flush_done
+DESCRIPTION
+Notifies flush done to the OMX Client.
+PARAMETERS
+ctxt -- Context information related to the self..
+RETURN VALUE
+NONE
+==========================================================================*/
+void omx_vdec::notify_flush_done(void *ctxt) {
+    omx_vdec *pThis = (omx_vdec *) ctxt;
+    if (!pThis->input_flush_progress && !pThis->output_flush_progress) {
+        if (BITMASK_PRESENT(&pThis->m_flags,
+                OMX_COMPONENT_OUTPUT_FLUSH_PENDING)) {
+            DEBUG_PRINT_LOW("Notify Output Flush done");
+            BITMASK_CLEAR (&pThis->m_flags,OMX_COMPONENT_OUTPUT_FLUSH_PENDING);
+            pThis->m_cb.EventHandler(&pThis->m_cmp, pThis->m_app_data,
+                OMX_EventCmdComplete,OMX_CommandFlush,
+                OMX_CORE_OUTPUT_PORT_INDEX,NULL );
+        }
+
+        if (BITMASK_PRESENT(&pThis->m_flags,
+                OMX_COMPONENT_INPUT_FLUSH_PENDING)) {
+            BITMASK_CLEAR (&pThis->m_flags,OMX_COMPONENT_INPUT_FLUSH_PENDING);
+            DEBUG_PRINT_LOW("Input Flush completed - Notify Client");
+            pThis->m_cb.EventHandler(&pThis->m_cmp, pThis->m_app_data,
+                    OMX_EventCmdComplete,OMX_CommandFlush,
+                    OMX_CORE_INPUT_PORT_INDEX,NULL );
+        }
+    }
+}
 
 /* ======================================================================
    FUNCTION
@@ -4472,6 +4499,8 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                                              eRet = OMX_ErrorUnsupportedSetting;
                                          }
                                      }
+                                     m_decode_order_mode =
+                                            pictureOrder->eOutputPictureOrder == QOMX_VIDEO_DECODE_ORDER;
                                      break;
                                  }
         case OMX_QcomIndexParamConcealMBMapExtraData:
@@ -5068,10 +5097,20 @@ OMX_ERRORTYPE  omx_vdec::get_config(OMX_IN OMX_HANDLETYPE      hComp,
 
             break;
         }
-        default: {
-                 DEBUG_PRINT_ERROR("get_config: unknown param %d",configIndex);
-                 eRet = OMX_ErrorBadParameter;
-             }
+        case OMX_IndexConfigAndroidVendorExtension:
+        {
+            VALIDATE_OMX_PARAM_DATA(configData, OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE);
+
+            OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *ext =
+                reinterpret_cast<OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *>(configData);
+            VALIDATE_OMX_VENDOR_EXTENSION_PARAM_DATA(ext);
+            return get_vendor_extension_config(ext);
+        }
+        default:
+        {
+            DEBUG_PRINT_ERROR("get_config: unknown param %d",configIndex);
+            eRet = OMX_ErrorBadParameter;
+        }
 
     }
 
@@ -5290,6 +5329,14 @@ OMX_ERRORTYPE  omx_vdec::set_config(OMX_IN OMX_HANDLETYPE      hComp,
         print_debug_color_aspects(&(params->sAspects), "Set Config");
         memcpy(&m_client_color_space, params, sizeof(DescribeColorAspectsParams));
         return ret;
+    } else if ((int)configIndex == (int)OMX_IndexConfigAndroidVendorExtension) {
+        VALIDATE_OMX_PARAM_DATA(configData, OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE);
+
+        OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *ext =
+                reinterpret_cast<OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *>(configData);
+        VALIDATE_OMX_VENDOR_EXTENSION_PARAM_DATA(ext);
+
+        return set_vendor_extension_config(ext);
     }
 
     return OMX_ErrorNotImplemented;
@@ -5810,6 +5857,12 @@ OMX_ERRORTYPE  omx_vdec::use_input_heap_buffers(
 {
     DEBUG_PRINT_LOW("Inside %s, %p", __FUNCTION__, buffer);
     OMX_ERRORTYPE eRet = OMX_ErrorNone;
+
+    if (secure_mode) {
+        DEBUG_PRINT_ERROR("use_input_heap_buffers is not allowed in secure mode");
+        return OMX_ErrorUndefined;
+    }
+
     if (!m_inp_heap_ptr)
         m_inp_heap_ptr = (OMX_BUFFERHEADERTYPE*)
             calloc( (sizeof(OMX_BUFFERHEADERTYPE)),
@@ -7071,7 +7124,7 @@ OMX_ERRORTYPE  omx_vdec::empty_this_buffer_proxy(OMX_IN OMX_HANDLETYPE  hComp,
     /*for use buffer we need to memcpy the data*/
     temp_buffer->buffer_len = buffer->nFilledLen;
 
-    if (input_use_buffer && temp_buffer->bufferaddr) {
+    if (input_use_buffer && temp_buffer->bufferaddr && !secure_mode) {
         if (buffer->nFilledLen <= temp_buffer->buffer_len) {
             if (arbitrary_bytes) {
                 memcpy (temp_buffer->bufferaddr, (buffer->pBuffer + buffer->nOffset),buffer->nFilledLen);
@@ -12333,3 +12386,7 @@ prefetch_exit:
     }
 }
 
+// No code beyond this !
+
+// inline import of vendor-extensions implementation
+#include "omx_vdec_extensions.hpp"

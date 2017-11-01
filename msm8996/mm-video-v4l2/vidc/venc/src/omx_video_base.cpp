@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010-2016, Linux Foundation. All rights reserved.
+Copyright (c) 2010-2017, Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -314,6 +314,8 @@ omx_video::omx_video():
     pthread_mutex_init(&m_lock, NULL);
     sem_init(&m_cmd_lock,0,0);
     DEBUG_PRINT_LOW("meta_buffer_hdr = %p", meta_buffer_hdr);
+
+    pthread_mutex_init(&m_buf_lock, NULL);
 }
 
 
@@ -354,6 +356,8 @@ omx_video::~omx_video()
     sem_destroy(&m_cmd_lock);
     DEBUG_PRINT_HIGH("m_etb_count = %" PRIu64 ", m_fbd_count = %" PRIu64, m_etb_count,
             m_fbd_count);
+
+    pthread_mutex_destroy(&m_buf_lock);
     DEBUG_PRINT_HIGH("omx_video: Destructor exit");
     DEBUG_PRINT_HIGH("Exiting OMX Video Encoder ...");
 }
@@ -2282,6 +2286,16 @@ OMX_ERRORTYPE  omx_video::get_config(OMX_IN OMX_HANDLETYPE      hComp,
                 }
                 break;
             }
+        case OMX_IndexConfigAndroidVendorExtension:
+            {
+                VALIDATE_OMX_PARAM_DATA(configData, OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE);
+
+                OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *ext =
+                    reinterpret_cast<OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *>(configData);
+                VALIDATE_OMX_VENDOR_EXTENSION_PARAM_DATA(ext);
+                return get_vendor_extension_config(ext);
+            }
+
         default:
             DEBUG_PRINT_ERROR("ERROR: unsupported index %d", (int) configIndex);
             return OMX_ErrorUnsupportedIndex;
@@ -2654,6 +2668,7 @@ OMX_ERRORTYPE  omx_video::use_output_buffer(
         return OMX_ErrorBadParameter;
     }
 
+    auto_lock l(m_buf_lock);
     if (!m_out_mem_ptr) {
         output_use_buffer = true;
         int nBufHdrSize        = 0;
@@ -2913,6 +2928,14 @@ OMX_ERRORTYPE omx_video::free_input_buffer(OMX_BUFFERHEADERTYPE *bufferHdr)
 
     if (index < m_sInPortDef.nBufferCountActual && m_pInput_pmem) {
         auto_lock l(m_lock);
+
+        if (mUseProxyColorFormat) {
+            if (m_opq_pmem_q.m_size) {
+                unsigned long addr, p1, id;
+                m_opq_pmem_q.pop_entry(&addr, &p1, &id);
+                DEBUG_PRINT_LOW("Removed entry in m_opq_pmem_q: address %lu", addr);
+            }
+        }
 
         if (m_pInput_pmem[index].fd > 0 && input_use_buffer == false) {
             DEBUG_PRINT_LOW("FreeBuffer:: i/p AllocateBuffer case");
@@ -3572,6 +3595,7 @@ OMX_ERRORTYPE  omx_video::free_buffer(OMX_IN OMX_HANDLETYPE         hComp,
                 nPortIndex, (unsigned int)m_sOutPortDef.nBufferCountActual);
         if (nPortIndex < m_sOutPortDef.nBufferCountActual &&
                 BITMASK_PRESENT(&m_out_bm_count, nPortIndex)) {
+            auto_lock l(m_buf_lock);
             // Clear the bit associated with it.
             BITMASK_CLEAR(&m_out_bm_count,nPortIndex);
             m_sOutPortDef.bPopulated = OMX_FALSE;
@@ -5290,3 +5314,8 @@ OMX_ERRORTYPE omx_video::push_empty_eos_buffer(OMX_HANDLETYPE hComp,
     --pending_input_buffers;
     return retVal;
 }
+
+// no code beyond this !
+
+// inline import of vendor extensions implementation
+#include "omx_video_extensions.hpp"
