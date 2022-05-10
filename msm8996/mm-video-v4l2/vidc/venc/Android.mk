@@ -41,7 +41,7 @@ ifeq ($(TARGET_BOARD_PLATFORM),msm8996)
 libmm-venc-def += -D_UBWC_
 endif
 
-ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_USE_FLAG_MSM8226)),true)
+ifneq (,$(call is-board-platform-in-list2, $(TARGETS_THAT_USE_FLAG_MSM8226)))
 libmm-venc-def += -D_MSM8226_
 endif
 
@@ -49,7 +49,7 @@ ifeq ($(TARGET_USES_ION),true)
 libmm-venc-def += -DUSE_ION
 endif
 
-ifeq ($(call is-board-platform-in-list, $(MASTER_SIDE_CP_TARGET_LIST)),true)
+ifneq (,$(call is-board-platform-in-list2, $(MASTER_SIDE_CP_TARGET_LIST)))
 libmm-venc-def += -DMASTER_SIDE_CP
 endif
 
@@ -81,6 +81,9 @@ endif
 include $(CLEAR_VARS)
 
 LOCAL_MODULE                    := libOmxVenc
+LOCAL_LICENSE_KINDS             := SPDX-license-identifier-BSD
+LOCAL_LICENSE_CONDITIONS        := notice
+LOCAL_NOTICE_FILE               := $(LOCAL_PATH)/../../../NOTICE
 LOCAL_MODULE_TAGS               := optional
 LOCAL_PROPRIETARY_MODULE        := true
 LOCAL_CFLAGS                    := $(libmm-venc-def)
@@ -100,7 +103,7 @@ LOCAL_SRC_FILES   += src/video_encoder_device_v4l2.cpp
 
 include $(BUILD_SHARED_LIBRARY)
 
-ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_NEED_SW_VENC_MPEG4)),true)
+ifneq (,$(call is-board-platform-in-list2, $(TARGETS_THAT_NEED_SW_VENC_MPEG4)))
 # ---------------------------------------------------------------------------------
 # 			Make the Shared library (libOmxSwVencMpeg4)
 # ---------------------------------------------------------------------------------
@@ -110,6 +113,9 @@ include $(CLEAR_VARS)
 libmm-venc-inc      += $(TARGET_OUT_HEADERS)/mm-video/swvenc
 
 LOCAL_MODULE                    := libOmxSwVencMpeg4
+LOCAL_LICENSE_KINDS             := SPDX-license-identifier-BSD
+LOCAL_LICENSE_CONDITIONS        := notice
+LOCAL_NOTICE_FILE               := $(LOCAL_PATH)/../../../NOTICE
 
 LOCAL_MODULE_TAGS               := optional
 LOCAL_PROPRIETARY_MODULE        := true
@@ -129,7 +135,7 @@ LOCAL_SRC_FILES   += src/omx_swvenc_mpeg4.cpp
 include $(BUILD_SHARED_LIBRARY)
 endif
 
-ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_NEED_SW_VENC_HEVC)),true)
+ifneq (,$(call is-board-platform-in-list2, $(TARGETS_THAT_NEED_SW_VENC_HEVC)))
 # ---------------------------------------------------------------------------------
 #                            Make the Shared library (libOmxSwVenc)
 # ---------------------------------------------------------------------------------
@@ -138,6 +144,9 @@ include $(CLEAR_VARS)
 libmm-venc-inc      += $(TARGET_OUT_HEADERS)/mm-video/swVenc
 
 LOCAL_MODULE                    := libOmxSwVencHevc
+LOCAL_LICENSE_KINDS             := SPDX-license-identifier-BSD
+LOCAL_LICENSE_CONDITIONS        := notice
+LOCAL_NOTICE_FILE               := $(LOCAL_PATH)/../../../NOTICE
 LOCAL_MODULE_TAGS               := optional
 LOCAL_PROPRIETARY_MODULE        := true
 LOCAL_CFLAGS                    := $(libmm-venc-def)
